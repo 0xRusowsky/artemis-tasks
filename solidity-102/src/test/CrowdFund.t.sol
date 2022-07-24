@@ -73,7 +73,7 @@ contract WhenDealingWithCampaigns is BaseSetup {
 
     function endCampaign(Campaign _campaign, address _signer) public {
         vm.prank(_signer);
-        _campaign.withdrawlFunds(_signer);
+        _campaign.withdrawFunds(_signer);
         console.log("... Campaign closed");
     }
 
@@ -161,8 +161,15 @@ contract WhenCampaignsWorkAsIntended is WhenDealingWithCampaigns {
         );
         Campaign aliceC0 = getCampaign(alice, 0);
 
+        uint256 bobBalance = bob.balance;
+        console.log("bob blance before:");
+        console.log(bob.balance / 1 ether);
         donateFunds(aliceC0, bob, 0.6 ether);
+        assert(bobBalance == bob.balance + 0.6 ether);
         cancelCampaign(aliceC0, alice);
+        console.log("bob blance after:");
+        console.log(bob.balance / 1 ether);
+        assert(bobBalance == bob.balance);
 
         assert(aliceC0.canceled());
     }

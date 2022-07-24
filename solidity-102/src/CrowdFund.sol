@@ -13,7 +13,7 @@ pragma solidity >=0.8.0;
 //   - Campaigns can be of 2 types: Start-up and Charity
 //   - Until the time limit of a given campaign is reached anyone can fund it by sending Eth. After time limit is reached, it can't receive any more funds.
 //   - An owner of a campaign can withdraw the raised Eth only after time limit was reached.
-//   - After the owner withdraws the funds, campaigns should be marked either as Fully-Funded (if raised amount is equal or greater than the funding goal) or Partially-Funded (if raised funds is lower than the funding goal)
+//   - After the owner withdraws the funds, campaigns should be marked either as Fully-Funded (if raised >= funding goal) or Partially-Funded (if raised < funding goal)
 //   - An owner must be able to cancel a campaign. If this happens that campaign can't receive any more Eth.
 //   - Implement all the events you see relevant
 //   - Extra: If the owner cancels a campaign, all funds must be returned to the respective donors.
@@ -36,6 +36,8 @@ contract Campaign {
     uint256 public deadline;
     CampaignOutcome public campaignOutcome;
     bool public canceled;
+    address[] donors;
+    mapping(address => uint256) donatedFunds;
 
     constructor(
         string memory _name,
@@ -54,9 +56,13 @@ contract Campaign {
 
     /* == EVENTS ================================== */
 
-    event NewDonation(address indexed sender, uint256 amount);
-    event CampaignClosure(uint32 timestamp, uint256 valueRaised);
-    event Withdrawl(address receiver, uint256 amount);
+    event NewDonation(
+        uint256 indexed timestamp,
+        address indexed sender,
+        uint256 amount
+    );
+    event CampaignClosure(uint256 timestamp, uint256 valueRaised);
+    event Withdraw(uint256 timestamp, address receiver, uint256 amount);
 
     /* == MODIFIERS ================================== */
 
@@ -66,12 +72,9 @@ contract Campaign {
     }
 
     modifier liveCampaign() {
-        require(
-            block.timestamp <= deadline &&
-                !canceled &&
-                address(this).balance - msg.value <= goal,
-            "Campaign closed"
-        );
+        require(block.timestamp <= deadline, "Deadline closed");
+        require(!canceled, "Canceled campaign");
+        require(address(this).balance - msg.value <= goal, "Goal reached");
         _;
     }
 
@@ -83,14 +86,22 @@ contract Campaign {
     /* == FUNCTIONS ================================== */
 
     fallback() external payable liveCampaign {
-        emit NewDonation(msg.sender, msg.value);
+        if (donatedFunds[msg.sender] == 0) {
+            donors.push(msg.sender);
+        }
+        donatedFunds[msg.sender] += msg.value;
+        emit NewDonation(block.timestamp, msg.sender, msg.value);
     }
 
     receive() external payable liveCampaign {
-        emit NewDonation(msg.sender, msg.value);
+        if (donatedFunds[msg.sender] == 0) {
+            donors.push(msg.sender);
+        }
+        donatedFunds[msg.sender] += msg.value;
+        emit NewDonation(block.timestamp, msg.sender, msg.value);
     }
 
-    function withdrawlFunds(address receiver)
+    function withdrawFunds(address receiver)
         public
         payable
         onlyOwner
@@ -98,8 +109,8 @@ contract Campaign {
     {
         uint256 funds = address(this).balance;
         (bool sent, ) = receiver.call{value: funds}("");
-        require(sent, "Failed to withdrawl Eth");
-        emit Withdrawl(receiver, funds);
+        require(sent, "Failed to withdraw");
+        emit Withdraw(block.timestamp, receiver, funds);
         campaignOutcome = (
             funds >= goal
                 ? CampaignOutcome.FullyFunded
@@ -108,6 +119,15 @@ contract Campaign {
     }
 
     function cancelCampaign() public payable onlyOwner liveCampaign {
+        for (uint8 i = 0; i < donors.length; ++i) {
+            if (donatedFunds[donors[i]] > 0) {
+                (bool sent, ) = donors[i].call{value: donatedFunds[donors[i]]}(
+                    "Campaign refund"
+                );
+                require(sent, "Failed to refund");
+                donatedFunds[donors[i]] = 0;
+            }
+        }
         canceled = true;
     }
 }
@@ -121,7 +141,8 @@ contract CrowdFundFactory {
     event NewCampaign(
         string campaignName,
         address campaignAddress,
-        address owner
+        address owner,
+        uint256 indexed timestamp
     );
 
     /* == FUNCTIONS ================================== */
@@ -142,6 +163,11 @@ contract CrowdFundFactory {
         userCampaigns[msg.sender]++;
         userCampaignContracts[msg.sender].push(newCampaign);
 
-        emit NewCampaign(_name, address(newCampaign), msg.sender);
+        emit NewCampaign(
+            _name,
+            address(newCampaign),
+            msg.sender,
+            block.timestamp
+        );
     }
 }
